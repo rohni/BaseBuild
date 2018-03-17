@@ -390,7 +390,45 @@ else:
     file = open(base_build + '_install', 'w')
     file.write('1')                                                     # Write phase to file
     file.close()
+
+    #================================
+    # Create the basedir
+    #================================
+    subprocess.call(["mkdir", "-p", basedir()])
+
+    #================================
+    # Make sure the same ip is assigned to eth0
+    #================================
+    ### TODO:
+    ### This needs to be put somewhere that will be fired on reboot
+    ### (i.e. not .bashrc).  Possibility of putting a crontab entry in /etc/cron.d
+    ### @reboot dhclient -r -v\n
+    ### @reboot dhclient -v -cf basedir() + "/dhcp_restart.conf"
+    ### And the runner for the installer as well in the same file
+
+    ### The cloning of the repository needs to be done before the reboot, so the script is in place.
     
+    try:
+        result = [i for i in subprocess.check_output("ifconfig eth0 |grep -i 'inet '", shell=True).split(" ") if i][1]
+        print("success output: " + result)
+        if result:
+            ## If we have an ip address, write it into a dhclient conf file
+            with open(basedir() + '/dhcp_restart.conf', 'w') as fd:
+                fd.write('send dhcp-requested-address ' + result + ';\n')
+                print("Created dhcp conf for restart")
+            ## Make sure dhclient is called for eth0 and the old ip is used
+            present = False
+            with open('.bashrc') as br:
+                present = 'dhcp_restart.conf' in br.read()
+            with open('.bashrc', 'a') as bw:
+                if not present:
+                    bw.write('sudo dhclient -r -v\n')
+                    bw.write('sudo dhclient -v -cf ' + basedir() + '/dhcp_restart.conf eth0\n')
+    except subprocess.CalledProcessError as e:
+        print("Return code: " + e.returncode)
+        print("Output: " + e.output)
+        die("Could not get the current IP, needed to set dhclient on restart")
+
     #================================
     # Make installer autorun
     #================================
