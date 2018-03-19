@@ -30,6 +30,7 @@ base_ip_range       = "10.11.0"             # IP range (/24) for the WiFI interf
 base_ip             = "10.11.0.1"           # Default IP address for the WiFi interface
 base_build          = "ELIMUPI-20180315"    # Date of build
 installed_modules   = [];                   # Installed modules
+base_repo_url       = "https://github.com/elumipi/BaseBuild.git"
 
 #=========================================================================================================
 # Command line arguments
@@ -334,6 +335,55 @@ def install_wifi():
     #sudo("ifdown eth0 && ifdown wlan0 && ifup eth0 && ifup wlan0") or die("Unable to restart network interfaces.")
     return True
 
+def clone_BaseBuild(url, path):
+    """Fetch the BaseBuild repo from github"""
+    print( "fetching files from github %s %s" % (url, path))
+    sudo("git clone --depth 1 %s %s/BaseBuild" % (url, path)) or die("Unable to clone Elimu installer repository.")
+
+def run_command_on_reboot(command):
+    rcfile = "~/.bashrc"
+    present = False
+    # read file and see if the line exists
+    with open(rcfile) as br:
+        present = command in br.read()
+    if not present:
+        with open(rcfile, 'a') as bw:
+            bw.write("%s\n" % command)
+
+def ensure_same_ip_on_reboot():
+    try:
+        result = [i for i in subprocess.check_output("ifconfig eth0 |grep -i 'inet '", shell=True).split(" ") if i][1]
+        print("success output: " + result)
+        if result:
+            ## If we have an ip address, write it into a dhclient conf file
+            with open(basedir() + '/dhcp_restart.conf', 'w') as fd:
+                fd.write('send dhcp-requested-address ' + result + ';\n')
+                print("Created dhcp conf for restart")
+            ## Make sure dhclient is called for eth0 and the old ip is used
+            run_command_on_reboot('sudo dhclient -r -v\n')
+            run_command_on_reboot('sudo dhclient -v -cf ' + basedir() + '/dhcp_restart.conf eth0\n')
+    ### TODO:
+    ### [ ] This needs to be put somewhere that will be fired on reboot
+    ### (i.e. not .bashrc).  Possibility of putting a crontab entry in /etc/cron.d
+    ### @reboot dhclient -r -v\n
+    ### @reboot dhclient -v -cf basedir() + "/dhcp_restart.conf"
+    except subprocess.CalledProcessError as e:
+        print("Return code: " + e.returncode)
+        print("Output: " + e.output)
+        die("Could not get the current IP, needed to set dhclient on restart")
+
+
+def setup_for_reboot(repo_url, install_path):
+    # Remove a previous basedir
+    sudo("rm -rf %s" % install_path)
+
+    # (Re-)Create the basedir
+    subprocess.call(["mkdir", "-p", install_path])
+
+    # Clone the basebuild repo into basedir()
+    clone_BaseBuild(repo_url, install_path)
+
+
 ############################################
 #    Main code start
 ############################################
@@ -392,42 +442,23 @@ else:
     file.close()
 
     #================================
-    # Create the basedir
+    # Ensure things are ready for rebooting the pi
     #================================
-    subprocess.call(["mkdir", "-p", basedir()])
+    ## DEBUG
+    ## remove this once things are commited
+    base_repo_url = "git@github.com:rohni/BaseBuild.git"
+    ## /DEBUG
+    setup_for_reboot(base_repo_url, basedir())
 
     #================================
     # Make sure the same ip is assigned to eth0
     #================================
     ### TODO:
-    ### This needs to be put somewhere that will be fired on reboot
-    ### (i.e. not .bashrc).  Possibility of putting a crontab entry in /etc/cron.d
-    ### @reboot dhclient -r -v\n
-    ### @reboot dhclient -v -cf basedir() + "/dhcp_restart.conf"
-    ### And the runner for the installer as well in the same file
+    ### [ ] This needs to be put somewhere that will be fired on reboot
+    ### [ ] And the runner for the installer as well in the same file
 
-    ### The cloning of the repository needs to be done before the reboot, so the script is in place.
-    
-    try:
-        result = [i for i in subprocess.check_output("ifconfig eth0 |grep -i 'inet '", shell=True).split(" ") if i][1]
-        print("success output: " + result)
-        if result:
-            ## If we have an ip address, write it into a dhclient conf file
-            with open(basedir() + '/dhcp_restart.conf', 'w') as fd:
-                fd.write('send dhcp-requested-address ' + result + ';\n')
-                print("Created dhcp conf for restart")
-            ## Make sure dhclient is called for eth0 and the old ip is used
-            present = False
-            with open('.bashrc') as br:
-                present = 'dhcp_restart.conf' in br.read()
-            with open('.bashrc', 'a') as bw:
-                if not present:
-                    bw.write('sudo dhclient -r -v\n')
-                    bw.write('sudo dhclient -v -cf ' + basedir() + '/dhcp_restart.conf eth0\n')
-    except subprocess.CalledProcessError as e:
-        print("Return code: " + e.returncode)
-        print("Output: " + e.output)
-        die("Could not get the current IP, needed to set dhclient on restart")
+    ### [X] The cloning of the repository needs to be done before the reboot, so the script is in place.
+    ensure_same_ip_on_reboot()
 
     #================================
     # Make installer autorun
@@ -457,13 +488,13 @@ else:
 #================================
 # Clone the GIT repo.
 #================================
-if basedir()[-17:] == "elimupi_installer":       # check if GIT install
-    print "Fetching files from GIT"
-    sudo("rm -fr /tmp/elimupi_installer")  
-    # NOTE GIT is still old name; needs rebranding
-    sudo("git clone --depth 1 https://github.com/elumipi/BaseBuild.git /tmp/elimupi_installer") or die("Unable to clone Elimu installer repository.")
-else:
-    print "Using local files "
+# if basedir()[-17:] == "elimupi_installer":       # check if GIT install
+#     print "Fetching files from GIT"
+#     sudo("rm -fr /tmp/elimupi_installer")  
+#     # NOTE GIT is still old name; needs rebranding
+#     sudo("git clone --depth 1 https://github.com/elumipi/BaseBuild.git /tmp/elimupi_installer") or die("Unable to clone Elimu installer repository.")
+# else:
+#     print "Using local files "
     
 #================================
 # Update Raspi firmware
